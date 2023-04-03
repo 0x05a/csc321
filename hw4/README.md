@@ -33,4 +33,5 @@ display graph
 ```
 The code has some slight error handling incase the dns server does not have a record or fails. We use networkx to create a dotfile and then convert the dotfile to become a png. Unfortunately the way it renders is difficult to view well. Networkx is written to do analysis moreso than render graphs but we still get an accurate image.
 
+*Note* to view image, click on it believe and scroll from left to right and you will see the image.
 ![](Graph.png)
