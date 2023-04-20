@@ -6,6 +6,7 @@ import socket
 from typing import Union
 import json # for turning strings into dictionaries
 import threading
+import time
 
 msg_queue: dict[str, int] = {}
 room_size: int
@@ -52,7 +53,7 @@ def setup_subscriber(ip: str, port: int): # -> zmq.Socket:
     subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
     while True:
         msg = subscriber.recv()
-        print(msg)
+        print(b2s(msg))
 
 
 def setup_publisher(port: int): # -> zmq.Socket:
@@ -62,18 +63,21 @@ def setup_publisher(port: int): # -> zmq.Socket:
     sent = [] # I believe this is like a static variable, I am hoping it is unique for every thread
     publisher.bind(f"tcp://*:{port}")
     # if there is a message queued up, send it
-    if len(msg_queue) > 0:
-        for msg in msg_queue:
-            if msg not in sent:
-                publisher.send_string(msg)
-                sent.append(msg)
-                msg_queue[msg] += 1
-                if msg_queue[msg] >= room_size:
-                    del msg_queue[msg]
-    else:
-        sent = []
-
-    
+    while True:
+        try:
+            if len(msg_queue) > 0:
+                for msg in msg_queue:
+                    if msg not in sent:
+                        publisher.send_string(msg)
+                        sent.append(msg)
+                        msg_queue[msg] += 1
+                        if msg_queue[msg] >= room_size:
+                            del msg_queue[msg]
+            # else:
+                # sent = []
+        except RuntimeError:
+            pass
+            
 
 ifaces = get_interfaces()
 
@@ -83,30 +87,32 @@ ip = ips['v4']
 b2s = lambda s: s.decode('utf-8')
 s2b = lambda s: s.encode('utf-8')
 
-context = zmq.Context()
-# create client that connects to server on port 1337
-client = context.socket(zmq.REQ)
-client.connect("tcp://localhost:1337")
-# create a loop that sends user input to the server
-while True:
-    # get user input
-    cmd = input("Enter a command: ")
-    # send the user input to the server
-    if "connect" in cmd:
-        cmd = cmd.split(" ")
-        ip = cmd[1]
-        port = cmd[2]
-        # set up daemon thread that listens for messages from the server
-        t = threading.Thread(target=setup_subscriber, args=(ip, port), daemon=True)
+# function that creates n subscriber sockets threads that takes a list of ips and ports
+def create_subscribers(ips: list[str], ports: list[int]): # -> list[zmq.Socket]:
+    """Create n subscriber threads that take a list of ips and ports"""
+    subscribers = []
+    for i in range(len(ips)):
+        t = threading.Thread(target=setup_subscriber, args=(ips[i], ports[i]), daemon=True)
         t.start()
-        # we need to set up room size so we can publish and subscribe properly
-    if "send" in cmd:
-        cmd = cmd.split(" ")
-        msg = cmd[1]
-        # set up daemon thread that sends messages to the server
-        msg_queue[msg] = 0
-    client.send(s2b(cmd))
-    # get the response from the server
-    resp = client.recv()
-    # print the response
-    print(b2s(resp))
+        subscribers.append(t)
+    return subscribers
+
+# create_publisher function which takes a list of ports and creates threads for each port
+def create_publishers(ports: list[int]): # -> list[zmq.Socket]:
+    """Create n publisher threads that take a list of ports"""
+    publishers = []
+    for i in range(len(ports)):
+        t = threading.Thread(target=setup_publisher, args=(ports[i],), daemon=True)
+        t.start()
+        publishers.append(t)
+    return publishers
+    
+
+
+# TODO SET UP SERVER AND CLIENT SET UP
+# connection
+# create a n - 1 publisher sockets and subscriber sockets
+# create a n - 1 thread for each publisher and subscriber socket
+n = 3 # will change in a bit
+room_size = n - 1
+# create a publisher socket and thread
