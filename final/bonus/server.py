@@ -3,6 +3,7 @@ from collections import defaultdict
 import logging
 from typing import Callable
 import threading
+import pdb
 context = zmq.Context()
 # create server that listens on port 1337 and accepts connections and adds all ip addresses of clients into a list
 server = context.socket(zmq.REP)
@@ -24,7 +25,7 @@ class client:
         return f"Client({self.ip}, {self.pub})"
 
     def __eq__(self, o) -> bool:
-        if o.ip == self.ip:
+        if o.ip == self.ip and o.pub == self.pub:
             return True
         else:
             return False
@@ -37,11 +38,13 @@ class room:
         self.clients = []
         self.votes = defaultdict(int)
         self.vote_port = defaultdict(int)
+        self.vote_pswd = defaultdict(str)
 
-    def add_votee(self, ip, port):
+    def add_votee(self, ip, port, pswd):
         self.votes[ip] = 0
         self.vote_port[ip] = port
-    
+        self.vote_pswd[ip] = pswd
+
     def vote(self, vote: str):
         if vote in self.votes:
             self.votes[vote] += 1
@@ -49,6 +52,12 @@ class room:
     def add_client(self, client: client):
         if client not in self.clients:
             self.clients.append(client)
+            self.curr += 1
+        if client.ip in self.votes:
+            del self.votes[client.ip]
+            del self.vote_port[client.ip]
+            passwds.append(self.vote_pswd[client.ip])
+            del self.vote_pswd[client.ip]
     
     def remove_client(self, client: client):
         if client in self.clients:
@@ -86,7 +95,24 @@ def query(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     Returns:
         None
     """
-    # send the list of rooms and votes
+    # check to see if anyone has been accepted into a channel
+    for r in rooms:
+        if len(r.votes) > 0:
+            try:
+                for v in r.votes:
+                    print(f"DEBUG line 96 {r.votes[v]}")
+                    if r.votes[v] >= r.curr - 1:
+                        r.add_client(client(v, r.vote_port[v]))
+                        logging.info(f"Added {v} to {r.name}")
+                        # pdb.set_trace()
+            except RuntimeError:
+                pass
+            
+            except Exception as e:
+                print(e)
+                quit()
+
+            
     if cmd[0] not in passwds:
         socket.send(b"Bad req")
         return
@@ -94,8 +120,8 @@ def query(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     if "votes" in cmd[1]:
         info_str = ""
         for r in rooms:
-            if len(room.votes) > 0:
-                info_str += f"{list(r.votes.keys)[0]}"
+            if len(r.votes) > 0:
+                info_str += f"{list(r.votes.keys())[0]}"
                 break
         socket.send(s2b(info_str))
     
@@ -109,6 +135,7 @@ def query(socket: zmq.sugar.socket.Socket, cmd: list[str]):
             socket.send(s2b(info_str))
     else:
         socket.send(b"Bad req")
+
 def add_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """Add the ip address of the client to the list of clients
 
@@ -141,7 +168,11 @@ def accept(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """
     # accept ip
     # flaw is not authenticated, someone can vote twice. 
-    ip = cmd[0]
+    pswd = cmd[0]
+    if pswd not in passwds:
+        socket.send(b"Bad req")
+        return
+    ip = cmd[1]
     sent = False
     # add the ip address of the client to the list
     for room in rooms:
@@ -193,17 +224,17 @@ def join_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     # add the ip address of the client to the list
     for room in rooms:
         if room.name == name:
+            print(f"DEBUG 207 {room.curr} <? {room.size}")
             if room.curr < room.size:
                 if room.curr == 0:
                     room.add_client(client(ip, port))
-                    room.curr += 1
                     ret_str = random_s()
+                    passwds.append(ret_str)
                     socket.send(s2b(ret_str))
 
                 elif room.curr >= 0:
-                    room.add_votee(ip, port)
                     ret_str = random_s()
-                    passwds.append(ret_str) 
+                    room.add_votee(ip, port, ret_str)
                     socket.send(s2b(ret_str))
             else:
                 socket.send(b"Room is full")
