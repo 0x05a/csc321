@@ -7,6 +7,12 @@ from typing import Union
 import json # for turning strings into dictionaries
 import threading
 import time
+import sys
+
+
+if len(sys.argv) < 2:
+    print("Usage: python p2p_client.py <sub_port>")
+    sys.exit(1)
 
 msg_queue: dict[str, int] = {}
 room_size: int
@@ -70,9 +76,7 @@ def setup_publisher(port: int): # -> zmq.Socket:
                     if msg not in sent:
                         publisher.send_string(msg)
                         sent.append(msg)
-                        msg_queue[msg] += 1
-                        if msg_queue[msg] >= room_size:
-                            del msg_queue[msg]
+                        del msg_queue[msg]
             # else:
                 # sent = []
         except RuntimeError:
@@ -84,8 +88,10 @@ ifaces = get_interfaces()
 
 ips = get_ips(ifaces[1])
 ip = ips['v4']
+passwd: str = ""
 room_name: str = ""
 port: int = 31337
+name = input("Enter your name: ")
 b2s = lambda s: s.decode('utf-8')
 s2b = lambda s: s.encode('utf-8')
 
@@ -96,6 +102,7 @@ def create_subscribers(ips: list[str], ports: list[int]): # -> list[zmq.Socket]:
     for i in range(len(ips)):
         t = threading.Thread(target=setup_subscriber, args=(ips[i], ports[i]), daemon=True)
         t.start()
+        print("started thread!")
         subscribers.append(t)
     return subscribers
 
@@ -139,15 +146,15 @@ def query(socket: zmq.sugar.socket.Socket):
     while 1:
         if (i % 2) == 0:
             time.sleep(5)
-            socket.send_string("query votes")
+            socket.send_string(f"query f{passwd} votes")
             msg = socket.recv()
             msg = b2s(msg)
             if len(msg):
                 i = input("Accept {msg}? (y/n) ")
                 if i == "y":
-                    socket.send(s2b(f"accept {msg}"))
+                    socket.send(s2b(f"accept {passwd} {msg}"))
                 else:
-                    socket.send(s2b(f"reject {msg}"))
+                    socket.send(s2b(f"reject {passwd} {msg}"))
                 msg = socket.recv()
                 if "Accepted" in b2s(msg):
                     print("Accepted")
@@ -171,7 +178,7 @@ def query(socket: zmq.sugar.socket.Socket):
                 
 
 
-create_publishers([31337])
+create_publishers([int(sys.argv[1])])
 
 # req socket that connects to localhost port 1337
 context = zmq.Context()
@@ -181,11 +188,30 @@ socket.connect("tcp://localhost:1337")
 #join_room(socket, "test")
 # create while loop which takes user input and sends it to the server
 while True:
-    msg = input("Enter a message: ")
-    socket.send_string(msg)
-    msg = socket.recv()
-    print(b2s(msg))
+    msg = input("> ")
+    if "!connect" in msg:
+        msg = msg.split(" ")
+        ip = msg[1]
+        port = int(msg[2])
+        create_subscribers([ip], [port])
+        subscribers.append((ip, port))
+        continue
 
+#    elif "send" in msg:
+#        msg = msg.split(" ")
+#        msg = f"{name}: " + " ".join(msg[1:])
+#        msg_queue[msg] = 0
+#        continue
+
+    elif msg[0] == "!":
+        msg = msg[1:]
+        socket.send_string(msg)
+        msg = socket.recv()
+        print(b2s(msg))
+
+    else:
+        msg = f"{name}: {msg}"
+        msg_queue[msg] = 0
 
 
 

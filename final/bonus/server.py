@@ -41,6 +41,7 @@ class room:
         self.vote_pswd = defaultdict(str)
 
     def add_votee(self, ip, port, pswd):
+        print("Adding votee")
         self.votes[ip] = 0
         self.vote_port[ip] = port
         self.vote_pswd[ip] = pswd
@@ -101,7 +102,7 @@ def query(socket: zmq.sugar.socket.Socket, cmd: list[str]):
             try:
                 for v in r.votes:
                     print(f"DEBUG line 96 {r.votes[v]}")
-                    if r.votes[v] >= r.curr - 1:
+                    if r.votes[v] >= r.curr:
                         r.add_client(client(v, r.vote_port[v]))
                         logging.info(f"Added {v} to {r.name}")
                         # pdb.set_trace()
@@ -196,7 +197,12 @@ def reject(socket: zmq.sugar.socket.Socket, cmd: list[str]):
         None
     """
     # reject ip
-    ip = cmd[0]
+    paswd = cmd[0]
+    if paswd not in passwds:
+        socket.send(b"Bad req")
+        return
+        
+    ip = cmd[1]
     sent = False
     # add the ip address of the client to the list
     for room in rooms:
