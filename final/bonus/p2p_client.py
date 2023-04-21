@@ -78,12 +78,14 @@ def setup_publisher(port: int): # -> zmq.Socket:
         except RuntimeError:
             pass
             
+subscribers: list[tuple[str, int]] = []
 
 ifaces = get_interfaces()
 
 ips = get_ips(ifaces[1])
 ip = ips['v4']
-
+room_name: str = ""
+port: int = 31337
 b2s = lambda s: s.decode('utf-8')
 s2b = lambda s: s.encode('utf-8')
 
@@ -107,12 +109,86 @@ def create_publishers(ports: list[int]): # -> list[zmq.Socket]:
         publishers.append(t)
     return publishers
     
+def join_room(socket: zmq.sugar.socket.Socket, room: str):
+    """Join a room with the given socket"""
+    socket.send_string(f"join {room} {ip} {str(port)}")
+    msg = socket.recv()
+    msg = b2s(msg)
+    if "Joined!" in msg:
+        parse = msg.split("!")[1]
+        parse = parse.split(" ")
+        for p in parse:
+            ip = p.split(":")[0]
+            port = int(p.split(":")[1])
+            create_subscribers([ip], [port])
+            subscribers.append((ip, port))
+            print(f"Joined {ip}:{port}")
+    elif "Room is full" in msg:
+        print("Room is full")
+
+def create_room(socket: zmq.sugar.socket.Socket, room: str, size: int):
+    """Create a room with the given socket"""
+    socket.send_string(f"add_room {room} {size}")
+    msg = socket.recv()
+    msg = b2s(msg)
+    if "dded" in msg:
+        print("Created room!")
+
+def query(socket: zmq.sugar.socket.Socket):
+    i = 0
+    while 1:
+        if (i % 2) == 0:
+            time.sleep(5)
+            socket.send_string("query votes")
+            msg = socket.recv()
+            msg = b2s(msg)
+            if len(msg):
+                i = input("Accept {msg}? (y/n) ")
+                if i == "y":
+                    socket.send(s2b(f"accept {msg}"))
+                else:
+                    socket.send(s2b(f"reject {msg}"))
+                msg = socket.recv()
+                if "Accepted" in b2s(msg):
+                    print("Accepted")
+                else:
+                    print("Rejected")
+            i += 1
+        else:
+            time.sleep(5)
+            socket.send_string("query room {room_name}")
+            msg = socket.recv()
+            msg = b2s(msg)
+            if len(msg):
+                s = msg.split(" ")
+                for p in s:
+                    ip = p.split(":")[0]
+                    port = int(p.split(":")[1])
+                    if (ip, port) not in subscribers:
+                        create_subscribers([ip], [port])
+                        print(f"Joined {ip}:{port}")
+            i += 1
+                
 
 
-# TODO SET UP SERVER AND CLIENT SET UP
-# connection
-# create a n - 1 publisher sockets and subscriber sockets
-# create a n - 1 thread for each publisher and subscriber socket
-n = 3 # will change in a bit
-room_size = n - 1
-# create a publisher socket and thread
+create_publishers([31337])
+
+# req socket that connects to localhost port 1337
+context = zmq.Context()
+socket = context.socket(zmq.REQ)
+socket.connect("tcp://localhost:1337")
+#create_room(socket, "test", 2)
+#join_room(socket, "test")
+# create while loop which takes user input and sends it to the server
+while True:
+    msg = input("Enter a message: ")
+    socket.send_string(msg)
+    msg = socket.recv()
+    print(b2s(msg))
+
+
+
+
+# while loop that sends the server whatever is input
+# while True:
+#     msg = input("Enter a message: ")

@@ -2,19 +2,20 @@ import zmq
 from collections import defaultdict
 import logging
 from typing import Callable
+import threading
 context = zmq.Context()
 # create server that listens on port 1337 and accepts connections and adds all ip addresses of clients into a list
 server = context.socket(zmq.REP)
 print(type(server))
 server.bind("tcp://*:1337")
-clients = []
+
 b2s = lambda s: s.decode('utf-8')
 s2b = lambda s: s.encode('utf-8')
 
 class client:
-    def __init__(self, ip) -> None:
+    def __init__(self, ip: str, port: int) -> None:
         self.ip = ip
-        self.pub: int # port
+        self.pub: int = port # port
     
     def __str__(self):
         return f"Client({self.ip}, {self.pub})"
@@ -22,83 +23,61 @@ class client:
     def __repr__(self):
         return f"Client({self.ip}, {self.pub})"
 
+    def __eq__(self, o) -> bool:
+        if o.ip == self.ip:
+            return True
+        else:
+            return False
+
 class room:
     def __init__(self, name: str, size: int):
         self.name = name
         self.size = size
+        self.curr = 0
         self.clients = []
+        self.votes = defaultdict(int)
+        self.vote_port = defaultdict(int)
+
+    def add_votee(self, ip, port):
+        self.votes[ip] = 0
+        self.vote_port[ip] = port
     
+    def vote(self, vote: str):
+        if vote in self.votes:
+            self.votes[vote] += 1
+        
     def add_client(self, client: client):
-        self.clients.append(client)
+        if client not in self.clients:
+            self.clients.append(client)
     
     def remove_client(self, client: client):
-        self.clients.remove(client)
+        if client in self.clients:
+            self.clients.remove(client)
     
     def __str__(self):
-        return f"Room({self.name}, {self.size}, {self.clients})"
+        return f"{self.name}"
+
+    def __repr__(self):
+        return f"{self.name}"
+
+    def __eq__(self, other) -> bool:
+        if other.name == self.name and other.size == self.size:
+            return True
+        else:
+            return False
 
 rooms: list[room] = []
 clients: list[client] = []
+passwds: list[str] = []
 
+def random_s() -> str:
+    """Generates a random string of length 10"""
+    import random
+    import string
+    letters = string.ascii_lowercase
+    return ''.join(random.choice(letters) for i in range(10))
 
-def list_clients(socket: zmq.Context.socket):
-    """Return a list of all the clients connected to the server
-
-    Args:
-        socket (zmq.Socket): The server socket
-
-    Returns:
-        (list) List of clients connected to the server
-    """
-    ret = {"clients": clients, "rooms": str(rooms)}
-    client_str = s2b(f"{str(ret)}")
-    socket.send(client_str)
-
-# create a function called add_client which adds it's ip to clients
-def add_client(socket: zmq.sugar.socket.Socket, cmd: list[str]):
-    """Add the ip address of the client to the list of clients
-
-    Args:
-        socket (zmq.Socket): The server socket
-        command (list): ip sent from the client
-
-    Returns:
-        None
-    """
-    # get the ip address of the client
-    ip = cmd[0]
-    # add the ip address of the client to the list
-    if ip not in clients:
-        clients.append(ip)
-        socket.send(b"Done")
-    else:
-        socket.send(b"Already in list")
-    # log that we added the client
-    logging.info(f"Added {ip} to the list of clients")
-
-def remove_client(socket: zmq.sugar.socket.Socket, cmd: list[str]):
-    """Remove the ip address of the client from the list of clients
-
-    Args:
-        socket (zmq.Socket): The server socket
-        command (list): ip sent from the client
-
-    Returns:
-        None
-    """
-    # get the ip address of the client
-    ip = cmd[0]
-    # remove the ip address of the client from the list
-    if ip in clients:
-        clients.remove(ip)
-        socket.send(b"Done")
-    else:
-        socket.send(b"Not in list")
-    # log that we removed the client
-    logging.info(f"Removed {ip} from the list of clients")
-
-
-def query(socket: zmq.sugar.socket.Socket):
+def query(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """Query the server for a list of clients
 
     Args:
@@ -107,9 +86,29 @@ def query(socket: zmq.sugar.socket.Socket):
     Returns:
         None
     """
-    # send the list of clients 
-    # 
+    # send the list of rooms and votes
+    if cmd[0] not in passwds:
+        socket.send(b"Bad req")
+        return
 
+    if "votes" in cmd[1]:
+        info_str = ""
+        for r in rooms:
+            if len(room.votes) > 0:
+                info_str += f"{list(r.votes.keys)[0]}"
+                break
+        socket.send(s2b(info_str))
+    
+    elif "room" in cmd[1]:
+        if len(cmd) >= 3:
+            info_str = ""
+            for r in rooms:
+                if r.name == cmd[2]:
+                    for c in r.clients:
+                        info_str += f"{c.ip}:{c.pub} "
+            socket.send(s2b(info_str))
+    else:
+        socket.send(b"Bad req")
 def add_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """Add the ip address of the client to the list of clients
 
@@ -121,18 +120,62 @@ def add_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
         None
     """
     name = cmd[0]
-    size = cmd[1]
+    size = int(cmd[1])
     # add the ip address of the client to the list
-    if name not in room:
-        room[name] = []
-        for i in range(int(size)):
-            room[name].append("")
-        socket.send(b"Done")
-
-    else:
-        socket.send(b"Already exists")
+    if room(name, size) not in rooms:
+        rooms.append(room(name, size))
+         
     # log that we added the client
     logging.info(f"Added {name} to the list of rooms")
+    socket.send(b"Added room")
+
+def accept(socket: zmq.sugar.socket.Socket, cmd: list[str]):
+    """Add the ip address of the client to the list of clients
+
+    Args:
+        socket (zmq.Socket): The server socket
+        command (list): name of the room, ip of client
+
+    Returns:
+        None
+    """
+    # accept ip
+    # flaw is not authenticated, someone can vote twice. 
+    ip = cmd[0]
+    sent = False
+    # add the ip address of the client to the list
+    for room in rooms:
+        for c in room.clients:
+            if ip == c.ip:
+                room.vote(ip)
+                socket.send(b"Accepted")
+                sent = True
+    if not sent:
+        socket.send(b"vote not accepted")
+    
+
+def reject(socket: zmq.sugar.socket.Socket, cmd: list[str]):
+    """Add the ip address of the client to the list of clients
+
+    Args:
+        socket (zmq.Socket): The server socket
+        command (list): name of the room, ip of client
+
+    Returns:
+        None
+    """
+    # reject ip
+    ip = cmd[0]
+    sent = False
+    # add the ip address of the client to the list
+    for room in rooms:
+        for c in room.clients:
+            if ip == c.ip:
+                del room.votes[ip]
+                socket.send(b"Rejected")
+                sent = True
+    if not sent:
+        socket.send(b"vote not accepted")
 
 def join_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """Add the ip address of the client to the list of clients
@@ -146,42 +189,77 @@ def join_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """
     name = cmd[0]
     ip = cmd[1]
+    port = int(cmd[2])
     # add the ip address of the client to the list
-    if name in room:
-        if len(list(filter(lambda x: x == "", room[name]))) == len(room[name]): # if no one in room
-            room[name][0] = ip
-            for a in room[name][1:]:
-                socket.send(b'port:')
-                p = b2s(socket.recv())
-                client_room[ip].append(int(p))
+    for room in rooms:
+        if room.name == name:
+            if room.curr < room.size:
+                if room.curr == 0:
+                    room.add_client(client(ip, port))
+                    room.curr += 1
+                    ret_str = random_s()
+                    socket.send(s2b(ret_str))
 
-        elif len(list(filter(lambda x: x == "", room[name]))) < len(room[name]): # if someone in room
-            # logic to add them into room and then send them ip port combo to connect
-            socket.send(b"Done")
-    # now we need to connected to the client's ports using a req-reply server
-        
-print(type(join_room))
+                elif room.curr >= 0:
+                    room.add_votee(ip, port)
+                    ret_str = random_s()
+                    passwds.append(ret_str) 
+                    socket.send(s2b(ret_str))
+            else:
+                socket.send(b"Room is full")
+                return
 
-actions: dict[str: Callable] = {"list": list_clients, "add": add_client, 
- "remove": remove_client, "add_room": add_room}
-
+actions: dict[str: Callable] = {"add_room": add_room, "join_room": join_room, "query": query, "accept": accept, "reject": reject}
 # set logging level to listen for info level
 logging.basicConfig(level=logging.INFO)
 
-while True:
+def handle_req(message: bytes, socket: zmq.sugar.socket.Socket):
+    """Handle a request from a client
+
+    Args:
+        socket (zmq.Socket): The server socket
+
+    Returns:
+        None
+    """
     # wait for a connection
+    # log message using logger module
+    logging.info(message)
+    print("AB")
+    command = b2s(message)
+    if " " in command:
+        command = command.split(" ")
+    if command[0] in actions:
+        actions[command[0]](socket, command[1:])
+    
+    elif type(command) == str:
+        if command in actions:
+            actions[command](socket)
+
+    else:
+        socket.send(b"Invalid command")
+        logging.info("Recieved invalid command")
+
+while True:
+    print("TRUE")
     message = server.recv()
     # log message using logger module
     logging.info(message)
     command = b2s(message)
     if " " in command:
         command = command.split(" ")
+
     if command[0] in actions:
         actions[command[0]](server, command[1:])
     
     elif type(command) == str:
+        func = False
         if command in actions:
             actions[command](server)
+            func = True
+        if not func:
+            server.send(b"Invalid command")
+            logging.info("Recieved invalid command")
 
     else:
         server.send(b"Invalid command")
