@@ -11,8 +11,35 @@ clients = []
 b2s = lambda s: s.decode('utf-8')
 s2b = lambda s: s.encode('utf-8')
 
-room: dict[str, list[str]] = defaultdict(list[str])
-client_room: dict[str, list[int]] = defaultdict(list[int])
+class client:
+    def __init__(self, ip) -> None:
+        self.ip = ip
+        self.pub: int # port
+    
+    def __str__(self):
+        return f"Client({self.ip}, {self.pub})"
+    
+    def __repr__(self):
+        return f"Client({self.ip}, {self.pub})"
+
+class room:
+    def __init__(self, name: str, size: int):
+        self.name = name
+        self.size = size
+        self.clients = []
+    
+    def add_client(self, client: client):
+        self.clients.append(client)
+    
+    def remove_client(self, client: client):
+        self.clients.remove(client)
+    
+    def __str__(self):
+        return f"Room({self.name}, {self.size}, {self.clients})"
+
+rooms: list[room] = []
+clients: list[client] = []
+
 
 def list_clients(socket: zmq.Context.socket):
     """Return a list of all the clients connected to the server
@@ -23,7 +50,7 @@ def list_clients(socket: zmq.Context.socket):
     Returns:
         (list) List of clients connected to the server
     """
-    ret = {"clients": clients, "rooms": {n: len(list(filter(lambda x: "" == x, room[n]))) for n in list(room.keys())}}
+    ret = {"clients": clients, "rooms": str(rooms)}
     client_str = s2b(f"{str(ret)}")
     socket.send(client_str)
 
@@ -70,6 +97,18 @@ def remove_client(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     # log that we removed the client
     logging.info(f"Removed {ip} from the list of clients")
 
+
+def query(socket: zmq.sugar.socket.Socket):
+    """Query the server for a list of clients
+
+    Args:
+        socket (zmq.Socket): The server socket
+
+    Returns:
+        None
+    """
+    # send the list of clients 
+    # 
 
 def add_room(socket: zmq.sugar.socket.Socket, cmd: list[str]):
     """Add the ip address of the client to the list of clients
